@@ -251,10 +251,6 @@ namespace menu {
             ImGui::Checkbox("Always On", &g_cfg.aimbot_always_on);
             ImGui::SameLine(180); KeybindPicker("Aim Key", g_cfg.aimbot_key);
 
-            ImGui::Checkbox("Visible Only", &g_cfg.aimbot_visible_only);
-            ImGui::SameLine(180);
-            ImGui::TextDisabled("Only target visible enemies");
-
             GlowSeparator();
             SectionHeader("Auto Shoot");
             ImGui::Checkbox("Auto Shoot (On Target)", &g_cfg.aimbot_auto_shoot);
@@ -280,9 +276,9 @@ namespace menu {
             GlowSeparator();
             SectionHeader("Smoothing");
             ImGui::PushItemWidth(280.f);
-            ImGui::SliderFloat("Smooth", &g_cfg.aimbot_smooth, 2.f, 12.f, "%.1f");
+            ImGui::SliderFloat("Smooth", &g_cfg.aimbot_smooth, 1.f, 12.f, "%.1f");
             ImGui::PopItemWidth();
-            g_cfg.aimbot_smooth = std::clamp(g_cfg.aimbot_smooth, 2.f, 12.f);
+            g_cfg.aimbot_smooth = std::clamp(g_cfg.aimbot_smooth, 1.f, 12.f);
             GlowSeparator();
 
             SectionHeader("Target Bone");

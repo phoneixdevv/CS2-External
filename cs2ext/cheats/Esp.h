@@ -15,6 +15,7 @@ struct Color4 {
     int R, G, B, A;
 };
 typedef Color4 RGB;
+extern bool isScoped;
 
 inline Color4 green  = { 0,   255, 0,   255 };
 inline Color4 red    = { 255, 0,   0,   255 };

@@ -20,6 +20,7 @@ static struct HGI {
     }
 } hgInit;
 
+bool isScoped;
 EntityCache::EntityCache(UINT, UINT, int)
     : should_run(false), client_dll(0), g_data(nullptr) {
     update_interval_ms = 1;
@@ -83,7 +84,13 @@ std::string EntityCache::GetWeaponName(uintptr_t pawn) {
 
 void EntityCache::SetFOV(float fov) {
     if (!g_cfg.fov_changer || !g_data || !g_data->localPlayerPawn) return;
-    if (mem::ReadMem<bool>(g_data->localPlayerPawn + m_bIsScoped)) return;
+    if (mem::ReadMem<bool>(g_data->localPlayerPawn + m_bIsScoped))
+    {
+        isScoped = true;
+		return;
+    }else{
+        isScoped = false;
+	}
     uintptr_t cs = mem::ReadMem<uintptr_t>(g_data->localPlayerPawn + m_pCameraServices); if (!cs) return;
     uint32_t tf = (uint32_t)std::clamp(fov, 1.f, 120.f);
     mem::WriteToMem<uint32_t>(cs + m_iFOV, tf);
