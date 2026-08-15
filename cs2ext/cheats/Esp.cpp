@@ -367,13 +367,25 @@ namespace render {
         float frac = std::clamp(armor, 0, 100) / 100.f;
         ImU32 fc = IM_COL32(80, 140, 255, 255);
 
-        if (style == 0) {
-            float xo = healthIsVertical ? 13.f : 7.f;
-            float bh = (boxH) * frac;
-            float x = left - xo;
-            dl->AddRectFilled({ x - 1, top - 1 }, { x + 4, top + boxH + 6 }, IM_COL32(0, 0, 0, 180), 2.f);
-            dl->AddRectFilled({ x, top + (boxH + 5.f - bh) }, { x + 3, top + boxH + 5 }, fc, 1.5f);
-        }
+       if (style == 0) {
+    float xo = healthIsVertical ? 13.f : 7.f;
+    float bh = boxH * frac;
+    float x = left - xo;
+
+    dl->AddRectFilled(
+        { x - 1, top - 1 },
+        { x + 4, top + boxH + 1 },
+        IM_COL32(0, 0, 0, 180),
+        2.f
+    );
+
+    dl->AddRectFilled(
+        { x, top + (boxH - bh) },
+        { x + 3, top + boxH },
+        fc,
+        1.5f
+    );
+}
         else {
             float yOff = (g_cfg.health_esp && g_cfg.health_bar_style == 1) ? 8.f : 4.f;
             float bw = boxW * frac;
