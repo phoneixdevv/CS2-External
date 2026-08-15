@@ -24,7 +24,7 @@ namespace features {
         constexpr float kMaxFov = 179.0f;
         constexpr float kAngleDeadzone = 0.02f;
         constexpr float kTargetSwitchRatio = 0.50f;
-        constexpr float kMaxDeltaTime = 0.12f;
+        constexpr float kMaxDeltaTime = 0.05f;
 
         struct AimCandidate {
             float     score = std::numeric_limits<float>::max();
