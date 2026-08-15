@@ -1,5 +1,4 @@
-#define NOMINMAX
-
+﻿#define NOMINMAX
 #include "aimbot.h"
 #include "triggerbot.h"
 #include "../render.h"
@@ -14,398 +13,230 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
-#include "../../cheats/Esp.h"
 
 namespace features {
-
     namespace {
 
         constexpr float kRadToDeg = 180.0f / static_cast<float>(M_PI);
         constexpr float kDegToRad = static_cast<float>(M_PI) / 180.0f;
-
         constexpr float kDefaultFov = 90.0f;
         constexpr float kMinFov = 1.0f;
         constexpr float kMaxFov = 179.0f;
-
         constexpr float kAngleDeadzone = 0.02f;
-        constexpr float kTargetSwitchRatio = 0.75f;
-        constexpr float kMaxDeltaTime = 0.1f;
+        constexpr float kTargetSwitchRatio = 0.50f;
+        constexpr float kMaxDeltaTime = 0.08f;
 
         struct AimCandidate {
             float     score = std::numeric_limits<float>::max();
-            float     reqYaw = 0.0f;
-            float     reqPitch = 0.0f;
-            float     pixelDistance = std::numeric_limits<float>::max();
-            float     worldDistance = std::numeric_limits<float>::max();
+            float     reqYaw = 0.f;
+            float     reqPitch = 0.f;
+            float     pixelDist = std::numeric_limits<float>::max();
+            float     worldDist = std::numeric_limits<float>::max();
             uintptr_t pawnAddr = 0;
         };
 
         static uintptr_t s_lockedTarget = 0;
-        static auto s_lastUpdate = std::chrono::steady_clock::now();
+        static auto      s_lastUpdate = std::chrono::steady_clock::now();
 
-        float NormalizeYaw(float yaw) {
-            while (yaw > 180.0f)
-                yaw -= 360.0f;
-            while (yaw < -180.0f)
-                yaw += 360.0f;
-            return yaw;
+        float NormYaw(float y) {
+            while (y > 180.f) y -= 360.f;
+            while (y < -180.f) y += 360.f;
+            return y;
         }
 
         float GetDeltaTime() {
-            const auto now = std::chrono::steady_clock::now();
-            const float dt = std::chrono::duration<float>(now - s_lastUpdate).count();
+            auto now = std::chrono::steady_clock::now();
+            float dt = std::chrono::duration<float>(now - s_lastUpdate).count();
             s_lastUpdate = now;
-
-            if (!std::isfinite(dt) || dt <= 0.0f)
-                return 1.0f / 60.0f;
-
+            if (!std::isfinite(dt) || dt <= 0.f) return 1.f / 128.f;
             return std::min(dt, kMaxDeltaTime);
         }
 
-        float DegreesToRadians(float degrees) {
-            return degrees * kDegToRad;
-        }
-
+        // Read actual in-game FOV (respects fov_changer setting)
         float GetActualFov(const GameData& gd) {
-            float actualFov = kDefaultFov;
+            if (g_cfg.fov_changer && g_cfg.custom_fov >= kMinFov && g_cfg.custom_fov <= kMaxFov)
+                return g_cfg.custom_fov;
 
-            uintptr_t cameraServices = mem::ReadMem<uintptr_t>(gd.localPlayerPawn + m_pCameraServices);
-
-            if (cameraServices) {
-                const uint32_t storedFov = mem::ReadMem<uint32_t>(cameraServices + m_iFOV);
-
-                if (storedFov >= kMinFov && storedFov <= kMaxFov) {
-                    actualFov = static_cast<float>(storedFov);
-                }
+            uintptr_t cs = mem::ReadMem<uintptr_t>(gd.localPlayerPawn + m_pCameraServices);
+            if (cs) {
+                uint32_t stored = mem::ReadMem<uint32_t>(cs + m_iFOV);
+                if (stored >= (uint32_t)kMinFov && stored <= (uint32_t)kMaxFov)
+                    return (float)stored;
             }
-
-            if (g_cfg.fov_changer && g_cfg.custom_fov >= kMinFov && g_cfg.custom_fov <= kMaxFov) {
-                actualFov = g_cfg.custom_fov;
-            }
-
-            return actualFov;
+            return kDefaultFov;
         }
 
-        float CalculateFocalLength(float screenWidth, float horizontalFov) {
-            if (screenWidth <= 1.0f)
-                return 1.0f;
-
-            horizontalFov = std::clamp(horizontalFov, kMinFov, kMaxFov);
-
-            const float halfFovRad = DegreesToRadians(horizontalFov * 0.5f);
-            const float tanHalf = std::tanf(halfFovRad);
-
-            if (!std::isfinite(tanHalf) || tanHalf <= 0.00001f) {
-                return screenWidth * 0.5f;
-            }
-
-            return (screenWidth * 0.5f) / tanHalf;
+        float FocalLength(float sw, float hFov) {
+            hFov = std::clamp(hFov, kMinFov, kMaxFov);
+            float t = std::tanf(hFov * 0.5f * kDegToRad);
+            return (t > 0.00001f) ? (sw * 0.5f) / t : sw * 0.5f;
         }
 
-        float CalculateFovRadius(float screenWidth, float actualFov, float aimFov) {
-            if (aimFov <= 0.0f)
-                return 0.0f;
-
-            const float focalLength = CalculateFocalLength(screenWidth, actualFov);
-            const float angle = std::clamp(aimFov, 0.0f, 179.0f);
-
-            return focalLength * std::tanf(DegreesToRadians(angle));
+        float FovRadius(float sw, float actualFov, float aimFov) {
+            if (aimFov <= 0.f) return 0.f;
+            return FocalLength(sw, actualFov) * std::tanf(std::clamp(aimFov, 0.f, 179.f) * kDegToRad);
         }
 
-        bool IsValidAngles(const ViewAngles& angles) {
-            if (!std::isfinite(angles.pitch) || !std::isfinite(angles.yaw)) {
-                return false;
-            }
-
-            if (angles.pitch < -90.0f || angles.pitch > 90.0f) {
-                return false;
-            }
-
-            if (angles.yaw < -360.0f || angles.yaw > 360.0f) {
-                return false;
-            }
-
-            return true;
-        }
-
-        float CalculateWorldDistance(const Vector3& a, const Vector3& b) {
-            const float dx = a.x - b.x;
-            const float dy = a.y - b.y;
-            const float dz = a.z - b.z;
-
-            return std::sqrt(dx * dx + dy * dy + dz * dz);
-        }
-
-        AimCandidate* FindCandidate(std::vector<AimCandidate>& candidates, uintptr_t pawnAddress) {
-            for (auto& candidate : candidates) {
-                if (candidate.pawnAddr == pawnAddress)
-                    return &candidate;
-            }
-            return nullptr;
-        }
-
-        AimCandidate* SelectBestCandidate(std::vector<AimCandidate>& candidates, uintptr_t currentLockedAddress) {
-            if (candidates.empty())
-                return nullptr;
-
-            AimCandidate* best = nullptr;
-
-            for (auto& candidate : candidates) {
-                if (!best || candidate.score < best->score) {
-                    best = &candidate;
-                }
-            }
-
-            if (!best)
-                return nullptr;
-
-            AimCandidate* locked = FindCandidate(candidates, currentLockedAddress);
-
-            if (!locked)
-                return best;
-
-            if (locked == best)
-                return locked;
-
-            if (best->score < locked->score * kTargetSwitchRatio) {
-                return best;
-            }
-
-            return locked;
+        bool ValidAngles(const ViewAngles& a) {
+            return std::isfinite(a.pitch) && std::isfinite(a.yaw)
+                && a.pitch >= -90.f && a.pitch <= 90.f
+                && a.yaw >= -360.f && a.yaw <= 360.f;
         }
 
         void DrawFovCircle(float radius) {
-            if (!g_cfg.aimbot_fov_draw || !g_cfg.aimbot_fov_enabled) {
-                return;
-            }
-
-            if (radius <= 0.0f || !std::isfinite(radius)) {
-                return;
-            }
-
-            ImDrawList* drawList = ImGui::GetBackgroundDrawList();
-
-            if (!drawList)
-                return;
-
-            float* color = g_cfg.fov_circle_color;
-
-            if (!color)
-                return;
-
-            const ImU32 drawColor = IM_COL32(
-                static_cast<int>(std::clamp(color[0], 0.0f, 1.0f) * 255.0f),
-                static_cast<int>(std::clamp(color[1], 0.0f, 1.0f) * 255.0f),
-                static_cast<int>(std::clamp(color[2], 0.0f, 1.0f) * 255.0f),
-                static_cast<int>(std::clamp(color[3], 0.0f, 1.0f) * 255.0f)
-            );
-
-            drawList->AddCircle(
-                ImVec2(
-                    static_cast<float>(screenWidth) * 0.5f,
-                    static_cast<float>(screenHeight) * 0.5f
-                ),
+            if (!g_cfg.aimbot_fov_draw || !g_cfg.aimbot_fov_enabled) return;
+            if (radius <= 0.f || !std::isfinite(radius)) return;
+            auto dl = ImGui::GetBackgroundDrawList();
+            if (!dl) return;
+            float* c = g_cfg.fov_circle_color;
+            dl->AddCircle(
+                { (float)screenWidth * 0.5f, (float)screenHeight * 0.5f },
                 radius,
-                drawColor,
-                64,
-                1.4f
-            );
+                IM_COL32((int)(c[0] * 255), (int)(c[1] * 255), (int)(c[2] * 255), (int)(c[3] * 255)),
+                64, 1.4f);
         }
 
-        void ResetAimbotState() {
-            s_lockedTarget = 0;
-        }
-    }
+        void ResetState() { s_lockedTarget = 0; }
+
+    } // anon namespace
 
     void Aimbot(const std::vector<EntityData>& entities, const GameData& gd) {
-        const float deltaTime = GetDeltaTime();
+        const float dt = GetDeltaTime();
 
         if (!g_cfg.aimbot || !gd.localPlayerPawn || !gd.client) {
-            ResetAimbotState();
-            return;
+            ResetState(); return;
         }
 
         const bool keyHeld = (GetAsyncKeyState(g_cfg.aimbot_key) & 0x8000) != 0;
+        if (!g_cfg.aimbot_always_on && !keyHeld) { ResetState(); return; }
 
-        if (!g_cfg.aimbot_always_on && !keyHeld) {
-            ResetAimbotState();
-            return;
-        }
-
-        ViewAngles currentAngles = mem::ReadMem<ViewAngles>(gd.client + dwViewAngles);
-
-        if (!IsValidAngles(currentAngles)) {
-            ResetAimbotState();
-            return;
-        }
-
-        currentAngles.yaw = NormalizeYaw(currentAngles.yaw);
+        ViewAngles cur = mem::ReadMem<ViewAngles>(gd.client + dwViewAngles);
+        if (!ValidAngles(cur)) { ResetState(); return; }
+        cur.yaw = NormYaw(cur.yaw);
 
         const float actualFov = GetActualFov(gd);
-        const float aimFov = std::clamp(g_cfg.aimbot_fov, 0.0f, 179.0f);
+        const float aimFov = std::clamp(g_cfg.aimbot_fov, 0.f, 179.f);
+        const float sw = (float)screenWidth;
+        const float sh = (float)screenHeight;
+        const float focal = FocalLength(sw, actualFov);
+        const float fovPx = FovRadius(sw, actualFov, aimFov);
+        const float fovPxSq = fovPx * fovPx;
 
-        const float focalLength = CalculateFocalLength(static_cast<float>(screenWidth), actualFov);
-        const float fovGatePx = CalculateFovRadius(static_cast<float>(screenWidth), actualFov, aimFov);
-        const float fovGatePxSq = fovGatePx * fovGatePx;
+        DrawFovCircle(fovPx);
 
-        DrawFovCircle(fovGatePx);
+        // Local origin for world-distance sort — read once from already-cached entity list
+        // (no extra RPM for entList/localPawn here; gd is filled each frame in main loop)
+        const float scx = sw * 0.5f;
+        const float scy = sh * 0.5f;
+        const int   bone = g_cfg.aimbot_target_bone;
+        const int   sort = g_cfg.aimbot_sort_mode;
+        const bool  fovE = g_cfg.aimbot_fov_enabled;
 
-        Vector3 localOrigin{};
-
-        uintptr_t gameScene = mem::ReadMem<uintptr_t>(gd.localPlayerPawn + m_pGameSceneNode);
-
-        if (gameScene) {
-            localOrigin = mem::ReadMem<Vector3>(gameScene + m_vOldOrigin);
+        // Use local player origin from gd — no extra read
+        // (localPlayerPawn origin isn't cached in GameData, but we avoid full entity re-scan.
+        //  We keep one lightweight read of the local origin here.)
+        Vector3 localOrg{};
+        if (sort == 1 || sort == 2) {
+            uintptr_t gsn = mem::ReadMem<uintptr_t>(gd.localPlayerPawn + m_pGameSceneNode);
+            if (gsn) localOrg = mem::ReadMem<Vector3>(gsn + m_vOldOrigin);
         }
-
-        const int targetBone = g_cfg.aimbot_target_bone;
-        const int sortMode = g_cfg.aimbot_sort_mode;
-        const bool fovEnabled = g_cfg.aimbot_fov_enabled;
-
-        const float screenCX = static_cast<float>(screenWidth) * 0.5f;
-        const float screenCY = static_cast<float>(screenHeight) * 0.5f;
 
         std::vector<AimCandidate> candidates;
         candidates.reserve(entities.size());
 
-        for (const auto& entity : entities) {
-            if (!entity.valid)
+        for (const auto& ent : entities) {
+            if (!ent.valid || !ent.isEnemy || ent.health <= 0 || !ent.pawnAddress)
                 continue;
 
-            if (!entity.isEnemy)
-                continue;
-
-            if (entity.health <= 0)
-                continue;
-
-            if (!entity.pawnAddress)
-                continue;
-
-            Vector3 targetPosition = entity.head;
-
-            if (entity.hasBoneData && targetBone >= 0 && targetBone < 25) {
-                const Vector3 bone = entity.bones[targetBone];
-
-                if (bone.x != 0.0f || bone.y != 0.0f || bone.z != 0.0f) {
-                    targetPosition = bone;
-                }
+            Vector3 tgt = ent.head;
+            if (ent.hasBoneData && bone >= 0 && bone < 25) {
+                const Vector3& b = ent.bones[bone];
+                if (b.x || b.y || b.z) tgt = b;
             }
 
-            const Vector3 screenPosition = targetPosition.w2s(gd.view_matrix);
+            Vector3 sp = tgt.w2s(gd.view_matrix);
+            if (!std::isfinite(sp.x) || !std::isfinite(sp.y) || sp.z < 0.01f) continue;
 
-            if (!std::isfinite(screenPosition.x) || !std::isfinite(screenPosition.y) || !std::isfinite(screenPosition.z)) {
-                continue;
+            const float dx = sp.x - scx;
+            const float dy = sp.y - scy;
+            const float pxDistSq = dx * dx + dy * dy;
+            if (fovE && pxDistSq > fovPxSq) continue;
+
+            const float pxDist = std::sqrt(pxDistSq);
+
+            float wDist = 0.f;
+            if (sort == 1 || sort == 2) {
+                float ex = tgt.x - localOrg.x, ey = tgt.y - localOrg.y, ez = tgt.z - localOrg.z;
+                wDist = std::sqrt(ex * ex + ey * ey + ez * ez);
+                if (!std::isfinite(wDist)) continue;
+                if (wDist < 1.f) wDist = 1.f;
             }
 
-            if (screenPosition.z < 0.01f)
-                continue;
+            float score;
+            if (sort == 0) score = pxDist;
+            else if (sort == 1) score = wDist;
+            else                score = pxDist * 0.5f + (wDist / 100.f) * 0.5f;
+            if (!std::isfinite(score)) continue;
 
-            const float dx = screenPosition.x - screenCX;
-            const float dy = screenPosition.y - screenCY;
-            const float pixelDistanceSq = dx * dx + dy * dy;
+            const float yawDelta = -std::atan2(dx, focal) * kRadToDeg;
+            const float pitchDelta = std::atan2(dy, focal) * kRadToDeg;
 
-            if (fovEnabled && pixelDistanceSq > fovGatePxSq) {
-                continue;
-            }
-
-            const float pixelDistance = std::sqrt(pixelDistanceSq);
-
-            float worldDistance = 0.0f;
-
-            if (sortMode == 1 || sortMode == 2) {
-                worldDistance = CalculateWorldDistance(targetPosition, localOrigin);
-
-                if (!std::isfinite(worldDistance))
-                    continue;
-
-                if (worldDistance < 1.0f)
-                    worldDistance = 1.0f;
-            }
-
-            const float yawDelta = -std::atan2(dx, focalLength) * kRadToDeg;
-            const float pitchDelta = std::atan2(dy, focalLength) * kRadToDeg;
-
-            const float requiredYaw = NormalizeYaw(currentAngles.yaw + yawDelta);
-            const float requiredPitch = std::clamp(currentAngles.pitch + pitchDelta, -89.0f, 89.0f);
-
-            float score = pixelDistance;
-
-            if (sortMode == 0) {
-                score = pixelDistance;
-            }
-            else if (sortMode == 1) {
-                score = worldDistance;
-            }
-            else {
-                const float normalizedWorld = worldDistance / 100.0f;
-                score = pixelDistance * 0.5f + normalizedWorld * 0.5f;
-            }
-
-            if (!std::isfinite(score))
-                continue;
-
-            AimCandidate candidate;
-            candidate.score = score;
-            candidate.reqYaw = requiredYaw;
-            candidate.reqPitch = requiredPitch;
-            candidate.pixelDistance = pixelDistance;
-            candidate.worldDistance = worldDistance;
-            candidate.pawnAddr = entity.pawnAddress;
-
-            candidates.push_back(candidate);
+            AimCandidate c;
+            c.score = score;
+            c.reqYaw = NormYaw(cur.yaw + yawDelta);
+            c.reqPitch = std::clamp(cur.pitch + pitchDelta, -89.f, 89.f);
+            c.pixelDist = pxDist;
+            c.worldDist = wDist;
+            c.pawnAddr = ent.pawnAddress;
+            candidates.push_back(c);
         }
 
-        if (candidates.empty()) {
-            ResetAimbotState();
-            return;
+        if (candidates.empty()) { ResetState(); return; }
+
+        //  Target selection with hysteresis 
+        AimCandidate* best = nullptr;
+        AimCandidate* locked = nullptr;
+        for (auto& c : candidates) {
+            if (!best || c.score < best->score) best = &c;
+            if (c.pawnAddr == s_lockedTarget) locked = &c;
         }
 
-        AimCandidate* chosen = SelectBestCandidate(candidates, s_lockedTarget);
-
-        if (!chosen) {
-            ResetAimbotState();
-            return;
+        AimCandidate* chosen = best;
+        if (locked && locked != best) {
+            // Only switch if new target is meaningfully better
+            if (best->score >= locked->score * kTargetSwitchRatio)
+                chosen = locked;
         }
-
+        if (!chosen) { ResetState(); return; }
         s_lockedTarget = chosen->pawnAddr;
 
-        const float deltaYaw = NormalizeYaw(chosen->reqYaw - currentAngles.yaw);
-        const float deltaPitch = chosen->reqPitch - currentAngles.pitch;
+        const float dYaw = NormYaw(chosen->reqYaw - cur.yaw);
+        const float dPitch = chosen->reqPitch - cur.pitch;
+        if (!std::isfinite(dYaw) || !std::isfinite(dPitch)) return;
 
-        if (!std::isfinite(deltaYaw) || !std::isfinite(deltaPitch)) {
-            return;
-        }
-
+        //  Auto-shoot with cooldown (delegated to TriggerbotForceShoot) 
         if (g_cfg.aimbot_auto_shoot) {
-            constexpr float shootTolerance = 0.5f;
-            const bool onTarget = std::fabs(deltaYaw) < shootTolerance && std::fabs(deltaPitch) < shootTolerance;
-
-            if (onTarget) {
-                TriggerbotForceShoot(gd);
-            }
+            constexpr float kShootTol = 0.5f;
+            if (std::fabs(dYaw) < kShootTol && std::fabs(dPitch) < kShootTol)
+                TriggerbotForceShoot(gd); // has its own cooldown guard inside
         }
 
-        if (std::fabs(deltaYaw) < kAngleDeadzone && std::fabs(deltaPitch) < kAngleDeadzone) {
-            return;
-        }
+        if (std::fabs(dYaw) < kAngleDeadzone && std::fabs(dPitch) < kAngleDeadzone) return;
 
-        int vel = isScoped ? 10 : 40;
+        //  Smoothed movement — scoped players get tighter response 
+        int   velBase = isScoped ? 10 : 60;
+        float smooth = std::max(1.f, g_cfg.aimbot_smooth);
+        float speed = velBase / smooth;
+        float interp = 1.f - std::exp(-speed * dt);
+        float factor = std::clamp(interp, 0.f, 1.f);
 
-        const float smooth = std::max(1.0f, g_cfg.aimbot_smooth);
-        const float speed = vel / smooth;
-        const float interpolation = 1.0f - std::exp(-speed * deltaTime);
-        const float factor = std::clamp(interpolation, 0.0f, 1.0f);
+        ViewAngles next;
+        next.pitch = std::clamp(cur.pitch + dPitch * factor, -89.f, 89.f);
+        next.yaw = NormYaw(cur.yaw + dYaw * factor);
+        next.roll = 0.f;
+        if (!std::isfinite(next.pitch) || !std::isfinite(next.yaw)) return;
 
-        ViewAngles nextAngles;
-        nextAngles.pitch = currentAngles.pitch + deltaPitch * factor;
-        nextAngles.yaw = NormalizeYaw(currentAngles.yaw + deltaYaw * factor);
-        nextAngles.pitch = std::clamp(nextAngles.pitch, -89.0f, 89.0f);
-        nextAngles.roll = 0.0f;
-
-        if (!std::isfinite(nextAngles.pitch) || !std::isfinite(nextAngles.yaw)) {
-            return;
-        }
-
-        mem::WriteToMem<ViewAngles>(gd.client + dwViewAngles, nextAngles);
+        mem::WriteToMem<ViewAngles>(gd.client + dwViewAngles, next);
     }
+
 }
