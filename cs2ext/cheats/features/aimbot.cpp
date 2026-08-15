@@ -24,7 +24,7 @@ namespace features {
         constexpr float kMaxFov = 179.0f;
         constexpr float kAngleDeadzone = 0.02f;
         constexpr float kTargetSwitchRatio = 0.50f;
-        constexpr float kMaxDeltaTime = 0.08f;
+        constexpr float kMaxDeltaTime = 0.12f;
 
         struct AimCandidate {
             float     score = std::numeric_limits<float>::max();
@@ -48,11 +48,11 @@ namespace features {
             auto now = std::chrono::steady_clock::now();
             float dt = std::chrono::duration<float>(now - s_lastUpdate).count();
             s_lastUpdate = now;
-
+        
             if (!std::isfinite(dt) || dt <= 0.f)
                 return 1.f / 128.f;
-
-            return dt;
+        
+            return std::min(dt, kMaxDeltaTime);
         }
         // Read actual in-game FOV (respects fov_changer setting)
         float GetActualFov(const GameData& gd) {
