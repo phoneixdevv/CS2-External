@@ -1,4 +1,4 @@
-﻿#define NOMINMAX
+#define NOMINMAX
 #include "aimbot.h"
 #include "triggerbot.h"
 #include "../render.h"
@@ -48,10 +48,12 @@ namespace features {
             auto now = std::chrono::steady_clock::now();
             float dt = std::chrono::duration<float>(now - s_lastUpdate).count();
             s_lastUpdate = now;
-            if (!std::isfinite(dt) || dt <= 0.f) return 1.f / 128.f;
-            return std::min(dt, kMaxDeltaTime);
-        }
 
+            if (!std::isfinite(dt) || dt <= 0.f)
+                return 1.f / 128.f;
+
+            return dt;
+        }
         // Read actual in-game FOV (respects fov_changer setting)
         float GetActualFov(const GameData& gd) {
             if (g_cfg.fov_changer && g_cfg.custom_fov >= kMinFov && g_cfg.custom_fov <= kMaxFov)
