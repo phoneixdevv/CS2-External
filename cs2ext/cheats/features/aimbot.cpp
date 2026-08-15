@@ -1,4 +1,4 @@
-#define NOMINMAX
+﻿#define NOMINMAX
 #include "aimbot.h"
 #include "triggerbot.h"
 #include "../render.h"
@@ -48,10 +48,10 @@ namespace features {
             auto now = std::chrono::steady_clock::now();
             float dt = std::chrono::duration<float>(now - s_lastUpdate).count();
             s_lastUpdate = now;
-        
+
             if (!std::isfinite(dt) || dt <= 0.f)
                 return 1.f / 128.f;
-        
+
             return std::min(dt, kMaxDeltaTime);
         }
         // Read actual in-game FOV (respects fov_changer setting)
@@ -126,17 +126,12 @@ namespace features {
 
         DrawFovCircle(fovPx);
 
-        // Local origin for world-distance sort — read once from already-cached entity list
-        // (no extra RPM for entList/localPawn here; gd is filled each frame in main loop)
         const float scx = sw * 0.5f;
         const float scy = sh * 0.5f;
         const int   bone = g_cfg.aimbot_target_bone;
         const int   sort = g_cfg.aimbot_sort_mode;
         const bool  fovE = g_cfg.aimbot_fov_enabled;
 
-        // Use local player origin from gd — no extra read
-        // (localPlayerPawn origin isn't cached in GameData, but we avoid full entity re-scan.
-        //  We keep one lightweight read of the local origin here.)
         Vector3 localOrg{};
         if (sort == 1 || sort == 2) {
             uintptr_t gsn = mem::ReadMem<uintptr_t>(gd.localPlayerPawn + m_pGameSceneNode);
@@ -226,7 +221,7 @@ namespace features {
         if (std::fabs(dYaw) < kAngleDeadzone && std::fabs(dPitch) < kAngleDeadzone) return;
 
         //  Smoothed movement — scoped players get tighter response 
-        int   velBase = isScoped ? 10 : 60;
+        int   velBase = isScoped ? 10 : 40;
         float smooth = std::max(1.f, g_cfg.aimbot_smooth);
         float speed = velBase / smooth;
         float interp = 1.f - std::exp(-speed * dt);

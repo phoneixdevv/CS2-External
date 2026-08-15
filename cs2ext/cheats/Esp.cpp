@@ -367,25 +367,25 @@ namespace render {
         float frac = std::clamp(armor, 0, 100) / 100.f;
         ImU32 fc = IM_COL32(80, 140, 255, 255);
 
-       if (style == 0) {
-    float xo = healthIsVertical ? 13.f : 7.f;
-    float bh = boxH * frac;
-    float x = left - xo;
+        if (style == 0) {
+            float xo = healthIsVertical ? 13.f : 7.f;
+            float bh = boxH * frac;
+            float x = left - xo;
 
-    dl->AddRectFilled(
-        { x - 1, top - 1 },
-        { x + 4, top + boxH + 1 },
-        IM_COL32(0, 0, 0, 180),
-        2.f
-    );
+            dl->AddRectFilled(
+                { x - 1, top - 1 },
+                { x + 4, top + boxH + 1 },
+                IM_COL32(0, 0, 0, 180),
+                2.f
+            );
 
-    dl->AddRectFilled(
-        { x, top + (boxH - bh) },
-        { x + 3, top + boxH },
-        fc,
-        1.5f
-    );
-}
+            dl->AddRectFilled(
+                { x, top + (boxH - bh) },
+                { x + 3, top + boxH },
+                fc,
+                1.5f
+            );
+        }
         else {
             float yOff = (g_cfg.health_esp && g_cfg.health_bar_style == 1) ? 8.f : 4.f;
             float bw = boxW * frac;
@@ -408,7 +408,7 @@ namespace render {
     {
         if (!g_cfg.spectator_list) return;
 
-        //  layout constants 
+        // layout constants 
         static constexpr float PANEL_W = 236.f;
         static constexpr float HEADER_H = 34.f;
         static constexpr float ROW_H = 38.f;
@@ -416,25 +416,112 @@ namespace render {
         static constexpr float AVATAR_R = 13.f;
         static constexpr float AVATAR_CX = 25.f;   // center-x of avatar inside row
 
-        static ImVec2 s_pos = { 10.f, 60.f };        // persists across frames
+        // Use config values for position and size
+        static ImVec2 s_pos = { g_cfg.spectator_x, g_cfg.spectator_y };
+        static float s_width = g_cfg.spectator_width;
+        static float s_height = g_cfg.spectator_height;
+
+        // Spectator UI interaction state (moved to global or static)
+        static bool s_dragging = true;
+        static bool s_resizing = true;
+        static ImVec2 s_dragOffset;
+        static ImVec2 s_resizeStartPos;
+        static ImVec2 s_resizeStartSize;
+
+        // Sync config values (so they persist across sessions)
+        g_cfg.spectator_x = s_pos.x;
+        g_cfg.spectator_y = s_pos.y;
+        g_cfg.spectator_width = s_width;
+        g_cfg.spectator_height = s_height;
 
         int   count = (int)specs.size();
         float totalH = HEADER_H + std::max(1, count) * ROW_H + PAD_BOT;
+        float currentWidth = s_width > 0 ? s_width : PANEL_W;
+        float currentHeight = s_height > 0 ? s_height : totalH;
 
-        //  open ImGui window (no title bar, no resize, WE control position) 
+        // Handle mouse interaction
+        ImGuiIO& io = ImGui::GetIO();
+        ImVec2 mousePos = io.MousePos;
+        bool mouseDown = io.MouseDown[0];
+        bool mouseReleased = io.MouseReleased[0];
+
+        // Helper to check if point is in rect
+        auto PointInRect = [](const ImVec2& p, const ImVec2& rPos, const ImVec2& rSize) -> bool {
+            return p.x >= rPos.x && p.x <= rPos.x + rSize.x &&
+                p.y >= rPos.y && p.y <= rPos.y + rSize.y;
+            };
+
+        // ========== DRAGGING (Title Bar) ==========
+        ImVec2 titlePos = s_pos;
+        ImVec2 titleSize = ImVec2(currentWidth, HEADER_H);
+        bool hoveringTitle = PointInRect(mousePos, titlePos, titleSize);
+
+        // Start dragging
+        if (hoveringTitle && mouseDown && !s_resizing && !s_dragging) {
+            s_dragging = true;
+            s_dragOffset = ImVec2(
+                mousePos.x - s_pos.x,
+                mousePos.y - s_pos.y
+            );
+        }
+
+        // Update dragging
+        if (s_dragging) {
+            s_pos.x = mousePos.x - s_dragOffset.x;
+            s_pos.y = mousePos.y - s_dragOffset.y;
+
+            // Clamp to screen bounds
+            s_pos.x = std::clamp(s_pos.x, 0.0f, (float)screenWidth - currentWidth);
+            s_pos.y = std::clamp(s_pos.y, 0.0f, (float)screenHeight - currentHeight);
+
+            if (mouseReleased) {
+                s_dragging = false;
+            }
+        }
+
+        // ========== RESIZING (Bottom-Right Corner) ==========
+        ImVec2 resizePos = ImVec2(s_pos.x + currentWidth - 16.0f, s_pos.y + currentHeight - 16.0f);
+        ImVec2 resizeSize = ImVec2(16.0f, 16.0f);
+        bool hoveringResize = PointInRect(mousePos, resizePos, resizeSize);
+
+        // Start resizing
+        if (hoveringResize && mouseDown && !s_dragging && !s_resizing) {
+            s_resizing = true;
+            s_resizeStartPos = mousePos;
+            s_resizeStartSize = ImVec2(currentWidth, currentHeight);
+        }
+
+        // Update resizing
+        if (s_resizing) {
+            float deltaX = mousePos.x - s_resizeStartPos.x;
+            float deltaY = mousePos.y - s_resizeStartPos.y;
+
+            s_width = std::clamp(s_resizeStartSize.x + deltaX, 150.0f, 500.0f);
+            s_height = std::clamp(s_resizeStartSize.y + deltaY, 100.0f, 600.0f);
+
+            if (mouseReleased) {
+                s_resizing = false;
+            }
+        }
+
+        // Update current dimensions after potential changes
+        currentWidth = s_width > 0 ? s_width : PANEL_W;
+        currentHeight = s_height > 0 ? s_height : totalH;
+
+        // Open ImGui window (no title bar, no resize, WE control position)
         ImGui::SetNextWindowPos(s_pos, ImGuiCond_Always);
-        ImGui::SetNextWindowSize({ PANEL_W, totalH }, ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.f);           // we paint our own background
+        ImGui::SetNextWindowSize({ currentWidth, currentHeight }, ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.f); // we paint our own background
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, { 0.f, 0.f });
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
 
         constexpr ImGuiWindowFlags kFlags =
             ImGuiWindowFlags_NoTitleBar |
-            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoResize |      // We handle resize manually
             ImGuiWindowFlags_NoScrollbar |
             ImGuiWindowFlags_NoScrollWithMouse |
-            ImGuiWindowFlags_NoMove |   // we drive s_pos ourselves
+            ImGuiWindowFlags_NoMove |        // We handle move manually
             ImGuiWindowFlags_NoBringToFrontOnFocus |
             ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_NoNav;
@@ -445,57 +532,40 @@ namespace render {
             ImVec2 p0 = ImGui::GetWindowPos();
             float  sx = p0.x, sy = p0.y;
 
-            //  header drag 
-            // Only fires when the overlay window is receiving mouse input, which
-            // only happens when g_cfg.menu_opened == true (overlay removes
-            // WS_EX_TRANSPARENT on menu open). So you can reposition the panel
-            // by dragging its header while the menu is open.
-            ImVec2 hMin = { sx, sy };
-            ImVec2 hMax = { sx + PANEL_W, sy + HEADER_H };
-            if (ImGui::IsMouseHoveringRect(hMin, hMax) &&
-                ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
-                !ImGui::IsAnyItemActive())
-            {
-                ImVec2 d = ImGui::GetIO().MouseDelta;
-                s_pos.x = std::clamp(s_pos.x + d.x, 0.f, (float)screenWidth - PANEL_W);
-                s_pos.y = std::clamp(s_pos.y + d.y, 0.f, (float)screenHeight - totalH);
-            }
-
-            //  panel chrome 
-            // drop shadow
-            dl->AddRectFilled({ sx + 4,sy + 4 }, { sx + PANEL_W + 4,sy + totalH + 4 },
+            // ========== PANEL CHROME ==========
+            // Drop shadow
+            dl->AddRectFilled({ sx + 4,sy + 4 }, { sx + currentWidth + 4,sy + currentHeight + 4 },
                 IM_COL32(0, 0, 0, 65), 9.f);
-            // body fill
-            dl->AddRectFilled({ sx,sy }, { sx + PANEL_W,sy + totalH },
+            // Body fill
+            dl->AddRectFilled({ sx,sy }, { sx + currentWidth,sy + currentHeight },
                 IM_COL32(10, 8, 14, 234), 9.f);
-            // red left accent stripe
-            dl->AddRectFilled({ sx,sy }, { sx + 3.f,sy + totalH },
+            // Red left accent stripe
+            dl->AddRectFilled({ sx,sy }, { sx + 3.f,sy + currentHeight },
                 IM_COL32(220, 30, 50, 248), 2.f);
-            // outer border
-            dl->AddRect({ sx,sy }, { sx + PANEL_W,sy + totalH },
+            // Outer border
+            dl->AddRect({ sx,sy }, { sx + currentWidth,sy + currentHeight },
                 IM_COL32(175, 22, 42, 115), 9.f, 0, 1.f);
 
-            //  header background 
+            // ========== HEADER ==========
             dl->AddRectFilledMultiColor(
-                { sx,sy }, { sx + PANEL_W, sy + HEADER_H },
+                { sx,sy }, { sx + currentWidth, sy + HEADER_H },
                 IM_COL32(34, 10, 18, 252), IM_COL32(34, 10, 18, 252),
                 IM_COL32(12, 8, 14, 100), IM_COL32(12, 8, 14, 100));
-            dl->AddLine({ sx + 3,sy + HEADER_H }, { sx + PANEL_W,sy + HEADER_H },
+            dl->AddLine({ sx + 3,sy + HEADER_H }, { sx + currentWidth,sy + HEADER_H },
                 IM_COL32(220, 30, 50, 48), 1.f);
 
-            // drag-grip dots — 3 stacked dots top-right, visual cue that the header
-            // is draggable
+            // Drag-grip dots — visual cue that the header is draggable
             for (int gi = 0; gi < 3; ++gi)
-                dl->AddCircleFilled({ sx + PANEL_W - 11.f, sy + 10.f + gi * 5.5f },
+                dl->AddCircleFilled({ sx + currentWidth - 11.f, sy + 10.f + gi * 5.5f },
                     1.9f, IM_COL32(190, 75, 95, 165), 6);
 
-            // camera / eye icon (two rings + filled pupil)
+            // Camera / eye icon
             float eX = sx + 15.f, eY = sy + HEADER_H * 0.5f;
             dl->AddCircle({ eX, eY }, 7.f, IM_COL32(200, 25, 45, 215), 16, 1.6f);
             dl->AddCircleFilled({ eX, eY }, 3.5f, IM_COL32(220, 30, 50, 235), 12);
             dl->AddCircleFilled({ eX - 1.2f, eY - 1.2f }, 1.4f, IM_COL32(255, 255, 255, 205), 8);
 
-            // header label
+            // Header label
             char hdr[48];
             snprintf(hdr, sizeof(hdr), "SPECTATORS  (%d)", count);
             ImVec2 hs = ImGui::CalcTextSize(hdr);
@@ -503,7 +573,40 @@ namespace render {
             dl->AddText({ hlx + 1,hly + 1 }, IM_COL32(0, 0, 0, 185), hdr);
             dl->AddText({ hlx,  hly }, IM_COL32(235, 215, 225, 255), hdr);
 
-            //  rows 
+            // ========== RESIZE HANDLE (bottom-right corner) ==========
+            float resizeX = sx + currentWidth;
+            float resizeY = sy + currentHeight;
+
+            // Resize handle triangles
+            dl->AddTriangleFilled(
+                ImVec2(resizeX - 12.0f, resizeY - 12.0f),
+                ImVec2(resizeX - 4.0f, resizeY - 12.0f),
+                ImVec2(resizeX - 12.0f, resizeY - 4.0f),
+                IM_COL32(120, 110, 125, 150)
+            );
+            dl->AddTriangleFilled(
+                ImVec2(resizeX - 8.0f, resizeY - 8.0f),
+                ImVec2(resizeX - 2.0f, resizeY - 8.0f),
+                ImVec2(resizeX - 8.0f, resizeY - 2.0f),
+                IM_COL32(120, 110, 125, 120)
+            );
+
+            // Hover highlight for resize handle
+            if (hoveringResize && !s_resizing) {
+                dl->AddTriangleFilled(
+                    ImVec2(resizeX - 14.0f, resizeY - 14.0f),
+                    ImVec2(resizeX - 2.0f, resizeY - 14.0f),
+                    ImVec2(resizeX - 14.0f, resizeY - 2.0f),
+                    IM_COL32(200, 180, 200, 60)
+                );
+            }
+
+            // Change cursor when hovering resize
+            if (hoveringResize || s_resizing) {
+                SetCursor(LoadCursor(nullptr, IDC_SIZENWSE));
+            }
+
+            // ========== ROWS ==========
             // Avatar palette: 8 vivid distinct hues, consistent per name hash
             static const ImU32 kPalette[8] = {
                 IM_COL32(222,68, 68, 255),   // red
@@ -519,36 +622,38 @@ namespace render {
             float ry = sy + HEADER_H;
             float t = (float)ImGui::GetTime();
 
+            // Calculate how many rows fit in the current height
+            int maxRows = (int)((currentHeight - HEADER_H - PAD_BOT) / ROW_H);
+            int displayCount = std::min(count, maxRows);
+
             if (count == 0)
             {
                 const char* emp = "No spectators";
                 ImVec2 es = ImGui::CalcTextSize(emp);
                 dl->AddText(
-                    { sx + (PANEL_W - es.x) * 0.5f, ry + (ROW_H - es.y) * 0.5f },
+                    { sx + (currentWidth - es.x) * 0.5f, ry + (ROW_H - es.y) * 0.5f },
                     IM_COL32(95, 80, 100, 155), emp);
             }
 
-            for (int idx = 0; idx < count; ++idx)
+            for (int idx = 0; idx < displayCount; ++idx)
             {
                 const auto& sp = specs[idx];
                 float        rowY = ry + idx * ROW_H;
                 float        rowCY = rowY + ROW_H * 0.5f;
 
-                // alternate row shade
+                // Alternate row shade
                 if (idx & 1)
-                    dl->AddRectFilled({ sx + 3,rowY }, { sx + PANEL_W,rowY + ROW_H },
+                    dl->AddRectFilled({ sx + 3,rowY }, { sx + currentWidth,rowY + ROW_H },
                         IM_COL32(255, 255, 255, 5));
-                // row divider
-                dl->AddLine({ sx + 8,rowY + ROW_H - 1 }, { sx + PANEL_W - 8,rowY + ROW_H - 1 },
+                // Row divider
+                dl->AddLine({ sx + 8,rowY + ROW_H - 1 }, { sx + currentWidth - 8,rowY + ROW_H - 1 },
                     IM_COL32(255, 255, 255, 10), 1.f);
 
-                //  profile-picture avatar 
-                // Colour is deterministic from the name hash so it's stable frame-to-frame
+                // Profile-picture avatar
                 uint32_t nh = 5381u;
                 for (unsigned char c : sp.name) nh = nh * 33u ^ c;
                 ImU32 aCol = kPalette[nh % 8];
 
-                // decompose to build a slightly brighter rim colour
                 int aR = (aCol >> IM_COL32_R_SHIFT) & 0xFF;
                 int aG = (aCol >> IM_COL32_G_SHIFT) & 0xFF;
                 int aB = (aCol >> IM_COL32_B_SHIFT) & 0xFF;
@@ -559,25 +664,25 @@ namespace render {
 
                 float avX = sx + AVATAR_CX, avY = rowCY;
 
-                // shadow under circle
+                // Shadow under circle
                 dl->AddCircleFilled({ avX + 1.5f, avY + 1.5f }, AVATAR_R + 1.2f,
                     IM_COL32(0, 0, 0, 85), 30);
-                // base fill
+                // Base fill
                 dl->AddCircleFilled({ avX, avY }, AVATAR_R, aCol, 30);
-                // specular top-left highlight → faked 3-D sphere look
+                // Specular top-left highlight
                 dl->AddCircleFilled({ avX - AVATAR_R * 0.28f, avY - AVATAR_R * 0.34f },
                     AVATAR_R * 0.58f, IM_COL32(255, 255, 255, 40), 22);
-                // bottom-right darkening
+                // Bottom-right darkening
                 dl->AddCircleFilled({ avX + AVATAR_R * 0.20f, avY + AVATAR_R * 0.24f },
                     AVATAR_R * 0.52f, IM_COL32(0, 0, 0, 30), 22);
-                // white outer ring
+                // White outer ring
                 dl->AddCircle({ avX, avY }, AVATAR_R + 0.5f,
                     IM_COL32(255, 255, 255, 52), 30, 1.4f);
-                // coloured inner rim
+                // Coloured inner rim
                 dl->AddCircle({ avX, avY }, AVATAR_R - 1.2f,
                     aRim, 30, 0.8f);
 
-                // initials — up to two chars (first letter of each word in name)
+                // Initials
                 char ini[3] = { 0,0,0 };
                 if (!sp.name.empty())
                 {
@@ -592,11 +697,10 @@ namespace render {
                 dl->AddText({ itX + 0.8f, itY + 0.8f }, IM_COL32(0, 0, 0, 155), ini);
                 dl->AddText({ itX,      itY }, IM_COL32(255, 255, 255, 248), ini);
 
-                //  name + "spectating you" sub-label 
+                // Name + "spectating you" sub-label
                 float nameX = sx + AVATAR_CX + AVATAR_R + 10.f;
-                float nameMaxW = PANEL_W - (nameX - sx) - 28.f;   // leave room for dot
+                float nameMaxW = currentWidth - (nameX - sx) - 28.f;
 
-                // truncate with ".." if too long
                 std::string dn = sp.name;
                 while (dn.size() > 1 && ImGui::CalcTextSize(dn.c_str()).x > nameMaxW)
                     dn.pop_back();
@@ -608,24 +712,34 @@ namespace render {
                 float lh = ImGui::GetTextLineHeight();
                 float nameY = rowCY - lh * 0.65f;
 
-                // drop shadow, then main text
                 dl->AddText({ nameX + 1, nameY + 1 }, IM_COL32(0, 0, 0, 172), dn.c_str());
                 dl->AddText({ nameX,   nameY }, IM_COL32(235, 220, 230, 255), dn.c_str());
 
-                // sub-label at 10 px — uses explicit font size overload
+                // Sub-label
                 dl->AddText(ImGui::GetFont(), 10.f,
                     { nameX, nameY + lh + 1.5f },
                     IM_COL32(155, 110, 135, 185),
                     "spectating you");
 
-                //  pulsing live dot (top-right of row) 
+                // Pulsing live dot
                 float pulse = 0.55f + 0.45f * sinf(t * 4.2f + idx * 1.1f);
                 int   dotA = (int)(pulse * 228.f);
-                float dotX = sx + PANEL_W - 12.f;
+                float dotX = sx + currentWidth - 12.f;
                 dl->AddCircleFilled({ dotX, rowCY }, 4.5f,
                     IM_COL32(220, 30, 50, dotA), 14);
                 dl->AddCircle({ dotX, rowCY }, 4.5f,
                     IM_COL32(255, 80, 80, (int)(pulse * 112.f)), 14, 1.f);
+            }
+
+            // Show "more" indicator if spectators don't fit
+            if (count > displayCount) {
+                char moreBuf[32];
+                snprintf(moreBuf, sizeof(moreBuf), "+%d more", count - displayCount);
+                float moreY = sy + currentHeight - 20.0f;
+                dl->AddText(
+                    ImVec2(sx + 10.0f, moreY),
+                    IM_COL32(150, 150, 160, 180), moreBuf
+                );
             }
         }
         ImGui::End();

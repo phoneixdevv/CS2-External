@@ -90,6 +90,13 @@ struct Config {
     float glow_vis_color[4] = { 0.00f, 1.00f, 0.30f, 0.80f };
     float glow_hid_color[4] = { 1.00f, 0.20f, 0.00f, 0.80f };
 
+    //speclist
+    float spectator_x = 20.0f;
+    float spectator_y = 100.0f;
+    float spectator_width = 250.0f;
+    float spectator_height = 300.0f;
+    
+
     //performance mode
 	bool performance_mode = false;
 };

@@ -37,6 +37,8 @@ static int  g_frameCount = 0;
 static auto g_lastFPS = std::chrono::high_resolution_clock::now();
 static HWND g_hwnd = nullptr;
 
+
+
 // Overlay frame cap — driven by misc tab slider
 static int g_overlayCap = 244;
 
