@@ -39,7 +39,7 @@ static HWND g_hwnd = nullptr;
 
 
 
-// Overlay frame cap — driven by misc tab slider
+// Overlay frame cap
 static int g_overlayCap = 244;
 
 static void ShowErrorBox(const wchar_t* title, const wchar_t* msg) {
@@ -319,10 +319,6 @@ namespace menu {
             ImGui::EndChild();
         }
 
-        // 
-        // 
-        // 
-        // 
         //  Triggerbot Tab 
         static void TabTriggerbot() {
             ImGui::BeginChild("##tb_scroll", { 0,0 }, false);
@@ -365,11 +361,10 @@ namespace menu {
             ImGui::TextDisabled("ON = less CPU, slightly older entity data  |  OFF = freshest data, more CPU");
             ImGui::Spacing();
 
-            // Overlay FPS cap — writes into g_overlayCap which the render loop reads
+            // Overlay FPS cap
             ImGui::PushItemWidth(280.f);
             ImGui::SliderInt("Overlay FPS Cap", &g_overlayCap, 30, 500, "%d fps");
             ImGui::PopItemWidth();
-            ImGui::TextDisabled("Caps overlay render loop — lower = less GPU stolen from game");
             GlowSeparator();
 
             //  Custom Crosshair 
@@ -623,9 +618,7 @@ namespace menu {
 
 } // namespace menu
 
-// =============================================================================
 //  WinMain
-// =============================================================================
 INT APIENTRY WinMain(HINSTANCE instance, HINSTANCE, PSTR, INT cmd_show) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(WNDCLASSEXW);
@@ -690,7 +683,6 @@ INT APIENTRY WinMain(HINSTANCE instance, HINSTANCE, PSTR, INT cmd_show) {
         Cleanup(swap_chain, device, device_context, rtv, blend_state, window, wc);
         return 0;
     }
-
     {
         ID3D11Texture2D* bb = nullptr;
         swap_chain->GetBuffer(0, IID_PPV_ARGS(&bb));
@@ -809,7 +801,7 @@ INT APIENTRY WinMain(HINSTANCE instance, HINSTANCE, PSTR, INT cmd_show) {
 
         entity_cache.update_interval_ms = (g_cfg.performance_mode ? 8 : 1);
 
-        //  Single-point game data read per frame 
+        // game data read per frame 
         {
             std::lock_guard<std::mutex> lk(gd.mtx);
             gd.localPlayerPawn = mem::ReadMem<uintptr_t>(client + dwLocalPlayerPawn);
@@ -844,12 +836,10 @@ INT APIENTRY WinMain(HINSTANCE instance, HINSTANCE, PSTR, INT cmd_show) {
             g_fps = g_frameCount; g_frameCount = 0; g_lastFPS = frameStart;
         }
 
-        //  ImGui frame 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // Grab snapshots — shared_ptr copy, zero vector alloc, lock ~2ns
         EntitySnapshot    entities = entity_cache.GetEntities();
         SpectatorSnapshot spectators = entity_cache.GetSpectators();
 
@@ -863,11 +853,8 @@ INT APIENTRY WinMain(HINSTANCE instance, HINSTANCE, PSTR, INT cmd_show) {
             continue;
         }
 
-        // null-safe: worker may not have published yet on frame 0
         DrawDebugInfoRight(entities ? entities->size() : 0, g_fps);
 
-        // Feature calls — dereference shared_ptr to get const vector& the
-        // functions actually expect. Guard against null (first frame edge case).
         if (gd.isInGame) {
             features::NoFlash(gd);
             features::BunnyHop(gd);
@@ -878,7 +865,7 @@ INT APIENTRY WinMain(HINSTANCE instance, HINSTANCE, PSTR, INT cmd_show) {
         }
         features::CustomCrosshair();
 
-        // ESP draw — same dereference pattern, spectators falls back to empty
+        // ESP draw
         if (entities && spectators) {
             render::DrawESP(*entities, *spectators, gd);
         }
